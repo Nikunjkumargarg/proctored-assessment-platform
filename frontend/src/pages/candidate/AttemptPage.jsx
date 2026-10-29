@@ -4,24 +4,36 @@ import Layout from '../../components/Layout';
 import { api } from '../../api/client';
 import { useProctoring } from '../../hooks/useProctoring';
 
+function secondsUntil(endsAt) {
+  if (!endsAt) return 0;
+  return Math.max(0, Math.floor((new Date(endsAt).getTime() - Date.now()) / 1000));
+}
+
 export default function AttemptPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [assessment, setAssessment] = useState(null);
   const [attempt, setAttempt] = useState(null);
   const [answers, setAnswers] = useState({});
-  const [remaining, setRemaining] = useState(0);
+  const [remaining, setRemaining] = useState(null);
   const [saveState, setSaveState] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const dirtyRef = useRef(false);
   const answersRef = useRef({});
+  const autoSubmitRef = useRef(false);
+  const endsAtRef = useRef(null);
 
   const load = useCallback(async () => {
     const data = await api(`/attempts/${id}`);
     setAssessment(data.assessment);
     setAttempt(data.attempt);
-    setRemaining(data.remainingSeconds || 0);
+    endsAtRef.current = data.attempt?.endsAt || null;
+    const left =
+      typeof data.remainingSeconds === 'number'
+        ? data.remainingSeconds
+        : secondsUntil(data.attempt?.endsAt);
+    setRemaining(left);
     const map = {};
     for (const a of data.attempt.answers || []) {
       map[String(a.questionId)] = a.value;
@@ -35,30 +47,38 @@ export default function AttemptPage() {
     load().catch((err) => setError(err.message));
   }, [load]);
 
-  // Local countdown; resync from server every 30s
+  // Countdown from server endsAt; resync every 15s
   useEffect(() => {
     if (!attempt || attempt.status !== 'in_progress') return undefined;
 
+    endsAtRef.current = attempt.endsAt;
+    setRemaining(secondsUntil(attempt.endsAt));
+
     const tick = setInterval(() => {
-      setRemaining((r) => Math.max(0, r - 1));
+      setRemaining(secondsUntil(endsAtRef.current));
     }, 1000);
 
     const sync = setInterval(() => {
       api(`/attempts/${id}/timer`)
         .then((t) => {
-          setRemaining(t.remainingSeconds);
+          if (t.endsAt) endsAtRef.current = t.endsAt;
+          setRemaining(
+            typeof t.remainingSeconds === 'number'
+              ? t.remainingSeconds
+              : secondsUntil(t.endsAt)
+          );
           if (t.status === 'submitted') {
             load();
           }
         })
         .catch(() => {});
-    }, 30000);
+    }, 15000);
 
     return () => {
       clearInterval(tick);
       clearInterval(sync);
     };
-  }, [attempt, id, load]);
+  }, [attempt?.id, attempt?.status, attempt?.endsAt, id, load]);
 
   const buildAnswerPayload = useCallback(() => {
     return Object.entries(answersRef.current).map(([questionId, value]) => ({
@@ -140,24 +160,43 @@ export default function AttemptPage() {
     }
   }
 
-  async function handleSubmit() {
-    if (!window.confirm('Submit assessment? You cannot change answers after this.')) return;
-    setSubmitting(true);
-    setError('');
-    try {
-      await api(`/attempts/${id}/submit`, {
-        method: 'POST',
-        body: { answers: buildAnswerPayload() },
-      });
-      await load();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSubmitting(false);
-    }
-  }
+  const handleSubmit = useCallback(
+    async ({ confirm = true, auto = false } = {}) => {
+      if (submitting || attempt?.status !== 'in_progress') return;
+      if (confirm && !window.confirm('Submit assessment? You cannot change answers after this.')) {
+        return;
+      }
+      setSubmitting(true);
+      setError('');
+      try {
+        await api(`/attempts/${id}/submit`, {
+          method: 'POST',
+          body: { answers: buildAnswerPayload() },
+        });
+        await load();
+        if (auto) setSaveState('Time expired — submitted automatically');
+      } catch (err) {
+        setError(err.message);
+        autoSubmitRef.current = false;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [attempt?.status, buildAnswerPayload, id, load, submitting]
+  );
 
-  const timeLabel = useMemo(() => formatSeconds(remaining), [remaining]);
+  // Auto-submit once when the countdown hits zero
+  useEffect(() => {
+    if (remaining !== 0 || !attempt || attempt.status !== 'in_progress') return;
+    if (autoSubmitRef.current || submitting) return;
+    autoSubmitRef.current = true;
+    handleSubmit({ confirm: false, auto: true });
+  }, [remaining, attempt, submitting, handleSubmit]);
+
+  const timeLabel = useMemo(
+    () => formatSeconds(remaining ?? 0),
+    [remaining]
+  );
 
   if (error && !attempt) {
     return (
@@ -199,11 +238,19 @@ export default function AttemptPage() {
   return (
     <Layout title="Assessment in progress">
       <div className="attempt-bar">
-        <div>
+        <div className="attempt-bar-title">
           <strong>{assessment.title}</strong>
-          <span className={`timer ${remaining <= 60 ? 'danger' : ''}`}>
-            Time left: {timeLabel}
+          <span className="muted">
+            {assessment.durationMinutes} min total
           </span>
+        </div>
+        <div
+          className={`timer-panel ${remaining !== null && remaining <= 60 ? 'danger' : ''}`}
+          aria-live="polite"
+          aria-label={`Time remaining ${timeLabel}`}
+        >
+          <span className="timer-label">Time remaining</span>
+          <span className="timer-value">{remaining === null ? '--:--' : timeLabel}</span>
         </div>
         <div className="attempt-actions">
           <span className="muted">{saveState}</span>
@@ -216,8 +263,8 @@ export default function AttemptPage() {
           <button
             type="button"
             className="btn btn-primary"
-            disabled={submitting}
-            onClick={handleSubmit}
+            disabled={submitting || remaining === 0}
+            onClick={() => handleSubmit()}
           >
             {submitting ? 'Submitting...' : 'Submit'}
           </button>
@@ -226,10 +273,7 @@ export default function AttemptPage() {
 
       {error ? <div className="alert">{error}</div> : null}
       {remaining === 0 ? (
-        <div className="alert">
-          Time has expired. Please submit your answers (auto-submit is a good-to-have and not
-          enabled in this core build).
-        </div>
+        <div className="alert">Time has expired. Submitting your answers…</div>
       ) : null}
 
       <section className="panel attempt-questions">
@@ -295,8 +339,12 @@ export default function AttemptPage() {
 }
 
 function formatSeconds(total) {
-  const s = Math.max(0, total || 0);
-  const m = Math.floor(s / 60);
+  const s = Math.max(0, Math.floor(Number(total) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
   const r = s % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
+  }
   return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
 }

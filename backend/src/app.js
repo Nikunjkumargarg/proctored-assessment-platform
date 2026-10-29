@@ -11,9 +11,18 @@ const attemptRoutes = require('./routes/attemptRoutes');
 
 const app = express();
 
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (config.clientOrigins.includes(origin)) return true;
+  // Local Vite may bind an alternate port (5173, 5174, …).
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+}
+
 app.use(
   cors({
-    origin: config.clientOrigin,
+    origin(origin, callback) {
+      callback(null, isAllowedOrigin(origin));
+    },
     credentials: true,
   })
 );

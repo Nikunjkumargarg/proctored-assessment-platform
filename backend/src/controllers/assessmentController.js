@@ -57,15 +57,40 @@ const updateAssessment = asyncHandler(async (req, res) => {
   const { title, description, durationMinutes, proctoringRules, isPublished } = req.body;
   if (title !== undefined) assessment.title = title;
   if (description !== undefined) assessment.description = description;
-  if (durationMinutes !== undefined) assessment.durationMinutes = durationMinutes;
-  if (proctoringRules !== undefined) {
-    assessment.proctoringRules = { ...assessment.proctoringRules.toObject(), ...proctoringRules };
+  if (durationMinutes !== undefined) {
+    const mins = Number(durationMinutes);
+    if (!Number.isFinite(mins) || mins < 1) {
+      return res.status(400).json({ message: 'durationMinutes must be a number >= 1' });
+    }
+    assessment.durationMinutes = mins;
+  }
+  if (proctoringRules !== undefined && typeof proctoringRules === 'object') {
+    const current =
+      assessment.proctoringRules && typeof assessment.proctoringRules.toObject === 'function'
+        ? assessment.proctoringRules.toObject()
+        : { ...(assessment.proctoringRules || {}) };
+    const next = { ...current };
+    for (const key of [
+      'captureTabSwitch',
+      'captureWindowBlur',
+      'captureFullscreenExit',
+      'captureCopy',
+      'capturePaste',
+      'captureRightClick',
+    ]) {
+      if (proctoringRules[key] !== undefined) {
+        next[key] = Boolean(proctoringRules[key]);
+      }
+    }
+    assessment.proctoringRules = next;
+    assessment.markModified('proctoringRules');
   }
   if (isPublished !== undefined) assessment.isPublished = Boolean(isPublished);
 
   await assessment.save();
   res.json({ assessment });
 });
+
 
 const addQuestion = asyncHandler(async (req, res) => {
   const assessment = await Assessment.findById(req.params.id);

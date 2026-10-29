@@ -51,24 +51,32 @@ export default function AssessmentDetailPage() {
   }, [id]);
 
   async function saveMeta(e) {
-    e.preventDefault();
+    e?.preventDefault?.();
     setError('');
     setMessage('');
     try {
+      const rules = assessment.proctoringRules || {};
       const data = await api(`/assessments/${id}`, {
         method: 'PATCH',
         body: {
           title: assessment.title,
-          description: assessment.description,
-          durationMinutes: assessment.durationMinutes,
-          isPublished: assessment.isPublished,
-          proctoringRules: assessment.proctoringRules,
+          description: assessment.description || '',
+          durationMinutes: Number(assessment.durationMinutes),
+          isPublished: Boolean(assessment.isPublished),
+          proctoringRules: {
+            captureTabSwitch: rules.captureTabSwitch !== false,
+            captureWindowBlur: rules.captureWindowBlur !== false,
+            captureFullscreenExit: rules.captureFullscreenExit !== false,
+            captureCopy: rules.captureCopy !== false,
+            capturePaste: rules.capturePaste !== false,
+            captureRightClick: rules.captureRightClick !== false,
+          },
         },
       });
       setAssessment(data.assessment);
       setMessage('Assessment saved');
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Failed to save assessment');
     }
   }
 

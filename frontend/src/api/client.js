@@ -5,19 +5,25 @@ function getToken() {
 }
 
 export async function api(path, options = {}) {
+  const { body, headers: customHeaders, ...rest } = options;
   const headers = {
     'Content-Type': 'application/json',
-    ...(options.headers || {}),
+    ...(customHeaders || {}),
   };
 
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers,
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...rest,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error('Failed to reach API. Is the backend running?');
+  }
 
   let data = null;
   const text = await res.text();

@@ -5,5 +5,8 @@ module.exports = {
   mongoUri: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/proctored_assessment',
   jwtSecret: process.env.JWT_SECRET || 'dev_secret',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '8h',
-  clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+  clientOrigins: (process.env.CLIENT_ORIGIN || 'http://localhost:5173')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
 };
